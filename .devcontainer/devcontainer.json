@@ -1,0 +1,55 @@
+{
+  "name": "Soldesk Infrastructure Dev Container",
+
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  "remoteUser": "vscode",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+
+    "ghcr.io/devcontainers/features/aws-cli:1": {
+      "version": "2"
+    },
+
+    "ghcr.io/devcontainers/features/azure-cli:1": {},
+
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "1.12.2",
+      "tflint": "none",
+      "terragrunt": "none"
+    },
+
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "minikube": "none"
+    },
+
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "HashiCorp.terraform",
+        "ms-azuretools.vscode-docker",
+        "github.vscode-pull-request-github",
+        "redhat.vscode-yaml",
+        "amazonwebservices.aws-toolkit-vscode",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "ms-python.python"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.eol": "\n"
+      }
+    }
+  }
+}
