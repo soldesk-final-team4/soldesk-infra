@@ -1,0 +1,202 @@
+name: Terraform CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/dev/sample/**"
+      - ".github/workflows/terraform.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/dev/sample/**"
+      - ".github/workflows/terraform.yml"
+
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Terraform operation"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - destroy
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: infra/dev/sample
+
+jobs:
+
+  # ==================================================
+  # CI: Pull Request code validation
+  # ==================================================
+
+  validate:
+
+    name: Terraform CI - Validate
+
+    if: github.event_name == 'pull_request'
+
+    runs-on: ubuntu-24.04
+
+    timeout-minutes: 15
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.2"
+          terraform_wrapper: false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init without Backend
+        run: |
+          terraform init \
+            -backend=false \
+            -input=false \
+            -lockfile=readonly
+
+      - name: Terraform Validate
+        run: terraform validate
+
+
+  # ==================================================
+  # CD: Deploy Terraform to AWS
+  # ==================================================
+
+  deploy:
+
+    name: Terraform CD - Deploy to AWS
+
+    if: >
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-24.04
+
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      id-token: write
+
+    concurrency:
+      group: terraform-dev-sample
+      cancel-in-progress: false
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_aws_account_id: ${{ vars.AWS_ACCOUNT_ID }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.2"
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: GitHubActionsTerraform
+
+      - name: Verify AWS Identity
+        run: aws sts get-caller-identity
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init with S3 Backend
+        run: |
+          terraform init \
+            -input=false \
+            -lockfile=readonly \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        if: >
+          github.event_name != 'workflow_dispatch' ||
+          inputs.operation == 'apply'
+        run: |
+          terraform plan \
+            -input=false \
+            -lock-timeout=5m \
+            -out=tfplan
+
+      - name: Terraform Apply
+        if: >
+          github.event_name != 'workflow_dispatch' ||
+          inputs.operation == 'apply'
+        run: |
+          terraform apply \
+            -input=false \
+            -lock-timeout=5m \
+            tfplan
+
+      - name: Verify Created Resource
+        if: >
+          github.event_name != 'workflow_dispatch' ||
+          inputs.operation == 'apply'
+        run: |
+          aws ssm get-parameter \
+            --name "/soldesk/dev/cicd-test" \
+            --query "Parameter.{Name:Name,Value:Value,Version:Version}" \
+            --output table
+
+          terraform state list
+
+      - name: Terraform Destroy Plan
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          inputs.operation == 'destroy'
+        run: |
+          terraform plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=5m \
+            -out=destroy.tfplan
+
+      - name: Terraform Destroy
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          inputs.operation == 'destroy'
+        run: |
+          terraform apply \
+            -input=false \
+            -lock-timeout=5m \
+            destroy.tfplan
