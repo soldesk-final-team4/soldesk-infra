@@ -10,8 +10,8 @@ resources:
 images:
   - name: soldesk-web
     newName: 350353785437.dkr.ecr.ap-northeast-2.amazonaws.com/soldesk-web
-    newTag: initial
+    newTag: 03805ce99287b7c2ab04c75dd1029b296fc593bb
 
   - name: soldesk-was
     newName: 350353785437.dkr.ecr.ap-northeast-2.amazonaws.com/soldesk-was
-    newTag: initial
+    newTag: 03805ce99287b7c2ab04c75dd1029b296fc593bb
