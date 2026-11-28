@@ -13,7 +13,25 @@ on:
       - "infra/aws/**"
       - ".github/workflows/aws-infra.yml"
 
+  # 수동 실행 옵션
   workflow_dispatch:
+    inputs:
+      operation:
+        description: "Terraform operation"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy-plan
+          - destroy
+
+      confirm_destroy:
+        description: "Confirm ALL managed AWS resources deletion"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -22,7 +40,16 @@ defaults:
   run:
     working-directory: infra/aws
 
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
 jobs:
+
+  # ==========================================
+  # CI: Terraform 코드 검증
+  # ==========================================
+
   ci:
     name: Terraform CI
     runs-on: ubuntu-latest
@@ -45,16 +72,31 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+  # ==========================================
+  # CD: Terraform 자동 / 수동 배포 및 삭제
+  # ==========================================
+
   cd:
     name: Terraform CD
     needs: ci
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'push' &&
+          vars.AWS_AUTO_DEPLOY == 'true'
+        )
+      )
 
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     env:
       TF_VAR_aws_account_id: ${{ vars.AWS_ACCOUNT_ID }}
       TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
 
     permissions:
       contents: read
@@ -65,6 +107,17 @@ jobs:
       cancel-in-progress: false
 
     steps:
+
+      # Destroy 실행 확인
+      - name: Confirm Destroy
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          inputs.operation == 'destroy' &&
+          !inputs.confirm_destroy
+        run: |
+          echo "ERROR: Destroy confirmation is required."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -78,16 +131,64 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
 
       - name: Terraform Init
-        env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
         run: |
           terraform init -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}"
 
+      # ======================================
+      # 일반 Plan
+      # ======================================
+
       - name: Terraform Plan
-        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
+        if: >
+          github.event_name == 'push' ||
+          inputs.operation == 'plan' ||
+          inputs.operation == 'apply'
+        run: |
+          terraform plan -input=false \
+            -lock-timeout=5m \
+            -out=tfplan
+
+      # ======================================
+      # 자동 / 수동 Apply
+      # ======================================
 
       - name: Terraform Apply
-        run: terraform apply -input=false -lock-timeout=5m tfplan
+        if: >
+          github.event_name == 'push' ||
+          inputs.operation == 'apply'
+        run: |
+          terraform apply -input=false \
+            -lock-timeout=5m tfplan
+
+      # ======================================
+      # 전체 삭제 계획
+      # ======================================
+
+      - name: Terraform Destroy Plan
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          (
+            inputs.operation == 'destroy-plan' ||
+            inputs.operation == 'destroy'
+          )
+        run: |
+          terraform plan -destroy -input=false \
+            -lock-timeout=5m \
+            -out=tfplan-destroy
+
+      # ======================================
+      # 전체 인프라 삭제
+      # ======================================
+
+      - name: Terraform Destroy
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          inputs.operation == 'destroy' &&
+          inputs.confirm_destroy
+        run: |
+          terraform apply -input=false \
+            -lock-timeout=5m tfplan-destroy
