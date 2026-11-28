@@ -1,10 +1,20 @@
-resource "aws_vpc" "cicd_test" {
-  cidr_block = "10.99.0.0/16"
+# =====================================
+# Network
+# =====================================
 
-  enable_dns_support   = true
-  enable_dns_hostnames = true
+# 테스트용(나중에 삭제)
+module "network" {
+  source = "./modules/network"
 
-  tags = {
-    Name = "soldesk-cicd-test-vpc"
-  }
+  vpc_cidr = "10.99.0.0/16"
+  vpc_name = "soldesk-cicd-test-vpc"
+}
+
+
+# =====================================
+# ECR
+# =====================================
+
+module "ecr" {
+  source = "./modules/ecr"
 }
