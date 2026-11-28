@@ -1,0 +1,80 @@
+name: Azure Infrastructure CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/azure/**"
+      - ".github/workflows/azure-infra.yml"
+
+  push:
+    branches: [main]
+    paths:
+      - "infra/azure/**"
+      - ".github/workflows/azure-infra.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: infra/azure
+
+jobs:
+  ci:
+    name: Terraform CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  cd:
+    name: Terraform CD
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    concurrency:
+      group: terraform-azure
+      cancel-in-progress: false
+
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_STATE_ACCOUNT: ${{ vars.AZURE_TF_STATE_ACCOUNT }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init -input=false \
+            -backend-config="storage_account_name=${TF_STATE_ACCOUNT}"
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -lock-timeout=5m tfplan

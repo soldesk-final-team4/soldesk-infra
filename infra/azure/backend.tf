@@ -1,8 +1,8 @@
 terraform {
-  backend "s3" {
-    key          = "azure/terraform.tfstate"
-    region       = "ap-northeast-2"
-    encrypt      = true
-    use_lockfile = true
+  backend "azurerm" {
+    container_name   = "tfstate"
+    key              = "dev/azure/terraform.tfstate"
+    use_oidc         = true
+    use_azuread_auth = true
   }
 }
