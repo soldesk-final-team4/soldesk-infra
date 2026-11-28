@@ -1,0 +1,126 @@
+name: Application CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "was/**"
+      - ".github/workflows/app.yml"
+
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "was/**"
+      - ".github/workflows/app.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: WEB Build Test
+        run: docker build -t soldesk-web:test ./web
+
+      - name: WAS Build Test
+        run: docker build -t soldesk-was:test ./was
+
+  publish:
+    name: Publish Images to ECR
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS OIDC Authentication
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          for APP in web was; do
+            REPO="soldesk-${APP}"
+            IMAGE="${REGISTRY}/${REPO}:${GITHUB_SHA}"
+
+            if aws ecr describe-images \
+              --repository-name "$REPO" \
+              --image-ids imageTag="$GITHUB_SHA" \
+              >/dev/null 2>&1; then
+              echo "Image already exists: $IMAGE"
+              continue
+            fi
+
+            docker build -t "$IMAGE" "./${APP}"
+            docker push "$IMAGE"
+          done
+
+  gitops:
+    name: Update GitOps Manifests
+    needs: publish
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    concurrency:
+      group: gitops-image-update
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check Source Revision
+        run: |
+          git diff --quiet "$GITHUB_SHA" HEAD -- web/ was/
+
+      - name: Update Image Tags
+        run: |
+          sed -i -E \
+            "s/^([[:space:]]*newTag:).*/\1 ${GITHUB_SHA}/" \
+            k8s/manifests/kustomization.yaml
+
+      - uses: azure/setup-kubectl@v4
+
+      - name: Validate Manifests
+        run: kubectl kustomize k8s/manifests > /dev/null
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add k8s/manifests/kustomization.yaml
+
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          git commit -m "chore: update application image tags"
+          git push origin main

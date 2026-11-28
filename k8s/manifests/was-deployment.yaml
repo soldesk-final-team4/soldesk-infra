@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soldesk-was
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: soldesk-was
+  template:
+    metadata:
+      labels:
+        app: soldesk-was
+    spec:
+      containers:
+        - name: was
+          image: soldesk-was
+          ports:
+            - containerPort: 8000

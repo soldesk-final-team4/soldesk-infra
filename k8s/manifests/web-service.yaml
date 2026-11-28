@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: soldesk-web
+spec:
+  type: ClusterIP
+  selector:
+    app: soldesk-web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
